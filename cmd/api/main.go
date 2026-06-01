@@ -6,7 +6,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"strconv"
 
 	"factsheet/internal/repository"
 
@@ -41,25 +40,20 @@ func main() {
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 
-	// Define our core factsheet endpoint
-	r.Get("/api/v1/portfolios/{id}/factsheet", func(w http.ResponseWriter, r *http.Request) {
-		// Extract portfolio ID from the URL
-		idParam := chi.URLParam(r, "id")
-		portfolioID, err := strconv.Atoi(idParam)
-		if err != nil {
-			http.Error(w, "Invalid portfolio ID", http.StatusBadRequest)
-			return
-		}
+	// Clean, pragmatic route matching the Prisma Global Growth Factsheet
+	r.Get("/api/factsheet", func(w http.ResponseWriter, r *http.Request) {
+		// Hardcoded to 1 since this backend explicitly powers the Prisma portfolio
+		defaultPortfolioID := 1
 
-		// Fetch the factsheet data
-		factsheet, err := repo.GetFactsheet(r.Context(), portfolioID)
+		// Fetch the aggregated factsheet data from the repository layer
+		factsheet, err := repo.GetFactsheet(r.Context(), defaultPortfolioID)
 		if err != nil {
 			log.Printf("Error fetching factsheet: %v", err)
 			http.Error(w, "Failed to load factsheet", http.StatusInternalServerError)
 			return
 		}
 
-		// Return JSON response
+		// Return clean JSON response
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(factsheet)
 	})
