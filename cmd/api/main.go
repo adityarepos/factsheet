@@ -39,7 +39,13 @@ func main() {
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
+	
+	// 1. Serves your ultra-premium frontend index.html dashboard at the root domain
+	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, "./index.html")
+	})
 
+	// 2. Serves your core quantitative JSON backend data endpoint
 	// Clean, pragmatic route matching the Prisma Global Growth Factsheet
 	r.Get("/api/factsheet", func(w http.ResponseWriter, r *http.Request) {
 		// Hardcoded to 1 since this backend explicitly powers the Prisma portfolio

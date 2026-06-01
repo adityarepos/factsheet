@@ -1,5 +1,5 @@
--- 1. Drop existing tables to start fresh
-DROP TABLE IF EXISTS asset_exposures, portfolio_holdings, assets, portfolios CASCADE;
+-- 1. Drop existing tables to start fresh (Added etf_underlying_holdings here)
+DROP TABLE IF EXISTS asset_exposures, portfolio_holdings, etf_underlying_holdings, assets, portfolios CASCADE;
 
 -- 2. Create the upgraded Portfolios Table
 CREATE TABLE portfolios (
@@ -9,20 +9,20 @@ CREATE TABLE portfolios (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
--- 3. Create the UPGRADED Master Asset Table (Now with deep metrics)
+-- 3. Create the UPGRADED Master Asset Table
 CREATE TABLE assets (
     ticker VARCHAR(50) PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
     current_price NUMERIC(15, 4),
-    pe_ratio NUMERIC(10, 4),             -- NEW
-    beta NUMERIC(10, 4),                 -- NEW
-    dividend_yield NUMERIC(10, 4),       -- NEW
-    fifty_two_week_high NUMERIC(15, 4),  -- NEW
+    pe_ratio NUMERIC(10, 4),             
+    beta NUMERIC(10, 4),                 
+    dividend_yield NUMERIC(10, 4),       
+    fifty_two_week_high NUMERIC(15, 4),  
     market_cap_category VARCHAR(50), 
     last_updated TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
--- 4. Create Portfolio Holdings & Exposures
+-- 4. Create Portfolio Holdings, Exposures & Underlying Look-Throughs
 CREATE TABLE portfolio_holdings (
     portfolio_id INT REFERENCES portfolios(id) ON DELETE CASCADE,
     asset_ticker VARCHAR(50) REFERENCES assets(ticker),
@@ -59,7 +59,7 @@ INSERT INTO assets (ticker, name) VALUES
 ('RELIANCE.NS', 'Reliance Industries'), ('TCS.NS', 'Tata Consultancy Services'), ('HDFCBANK.NS', 'HDFC Bank'),
 ('JPM', 'JPMorgan Chase & Co.'), ('JNJ', 'Johnson & Johnson'), ('XOM', 'Exxon Mobil Corp');
 
--- 7. Allocate Portfolio Weights (Must sum exactly to 1.0000 / 100%)
+-- 7. Allocate Portfolio Weights (Sums perfectly to 1.0000)
 INSERT INTO portfolio_holdings (portfolio_id, asset_ticker, weight) VALUES
 (1, 'VOO', 0.2500),         (1, 'IEFA', 0.1500),        (1, 'VWO', 0.0500),
 (1, 'AAPL', 0.0700),        (1, 'MSFT', 0.0700),        (1, 'NVDA', 0.0600),

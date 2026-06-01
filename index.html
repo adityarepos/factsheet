@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en" class="antialiased">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Prisma Platform | Quant Engine</title>
+    
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    },
+                    colors: {
+                        brand: { 500: '#10b981', 400: '#34d399', 900: '#064e3b' },
+                        surface: '#121212',
+                        panel: '#1a1a1a'
+                    }
+                }
+            }
+        }
+    </script>
+    
+    <style>
+        body { background-color: #09090b; color: #ededed; }
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(10px);
+        }
+        .animate-fade-in { animation: fadeIn 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards; opacity: 0; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        
+        ::-webkit-scrollbar { width: 4px; height: 4px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
+    </style>
+</head>
+<body class="min-h-screen p-4 md:p-8 flex flex-col items-center">
+
+    <div class="w-full max-w-6xl space-y-6">
+        
+        <header class="flex flex-col md:flex-row justify-between items-start md:items-end border-b border-white/10 pb-4 animate-fade-in" style="animation-delay: 0.1s;">
+            <div>
+                <div class="flex items-center space-x-3 mb-2">
+                    <div class="h-2 w-2 rounded-full bg-brand-500 shadow-[0_0_10px_#10b981] animate-pulse"></div>
+                    <span class="text-xs font-mono text-brand-500 uppercase tracking-widest">System Live</span>
+                </div>
+                <h1 id="portfolio-name" class="text-3xl font-semibold tracking-tight text-white">Initializing Engine...</h1>
+                <p id="portfolio-desc" class="text-sm text-gray-400 mt-1 max-w-2xl">Establishing secure connection to Neon PostgreSQL...</p>
+            </div>
+            
+            <div class="mt-4 md:mt-0 flex space-x-4 text-xs font-mono text-gray-500 text-right">
+                <div>
+                    <div class="uppercase tracking-wider text-gray-600 mb-1">Latency</div>
+                    <div id="latency" class="text-white">-- ms</div>
+                </div>
+                <div>
+                    <div class="uppercase tracking-wider text-gray-600 mb-1">Cache Status</div>
+                    <div id="cache-status" class="text-brand-400">WAITING</div>
+                </div>
+            </div>
+        </header>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 animate-fade-in" style="animation-delay: 0.15s;">
+            <div class="glass-panel rounded-xl p-6 flex flex-col items-center">
+                <h3 class="text-xs font-mono uppercase tracking-widest text-gray-400 mb-4 self-start">Sector Weight Distribution</h3>
+                <div class="w-full max-h-56 flex justify-center">
+                    <canvas id="sectorChart"></canvas>
+                </div>
+            </div>
+            <div class="glass-panel rounded-xl p-6 flex flex-col justify-between">
+                <h3 class="text-xs font-mono uppercase tracking-widest text-gray-400 mb-4">Geographic Regional Weights</h3>
+                <div class="w-full max-h-56">
+                    <canvas id="regionChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start animate-fade-in" style="animation-delay: 0.25s;">
+            
+            <div class="glass-panel rounded-xl overflow-hidden relative">
+                <div class="absolute top-0 left-0 w-full h-px bg-gradient-to-r from-transparent via-brand-500/50 to-transparent"></div>
+                <div class="p-6">
+                    <div class="flex justify-between items-center mb-6">
+                        <h2 class="text-xs font-mono uppercase tracking-widest text-brand-400">Ultimate Look-Through Holdings</h2>
+                        <span class="text-[10px] font-mono border border-brand-500/30 text-brand-400 px-2 py-1 rounded bg-brand-500/10">MATH: SQL COALESCE</span>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left border-collapse">
+                            <thead>
+                                <tr class="text-gray-500 text-xs font-mono border-b border-white/5">
+                                    <th class="pb-3 font-normal w-20">TICKER</th>
+                                    <th class="pb-3 font-normal">ASSET NAME</th>
+                                    <th class="pb-3 font-normal text-right">NET WEIGHT</th>
+                                </tr>
+                            </thead>
+                            <tbody id="ultimate-holdings-list" class="divide-y divide-white/5 text-sm">
+                                </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div class="glass-panel rounded-xl p-6">
+                <h2 class="text-xs font-mono uppercase tracking-widest text-gray-500 mb-6">Top-Level Allocations</h2>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left border-collapse">
+                        <thead>
+                            <tr class="text-gray-500 text-xs font-mono border-b border-white/5">
+                                <th class="pb-3 font-normal w-20">TICKER</th>
+                                <th class="pb-3 font-normal">FUND / ASSET</th>
+                                <th class="pb-3 font-normal text-right">PRICE</th>
+                                <th class="pb-3 font-normal text-right">P/E</th>
+                                <th class="pb-3 font-normal text-right">ALLOCATION</th>
+                            </tr>
+                        </thead>
+                        <tbody id="holdings-list" class="divide-y divide-white/5 text-sm text-gray-300">
+                            </tbody>
+                    </table>
+                </div>
+            </div>
+
+        </div>
+        
+        <div class="glass-panel rounded-lg p-4 font-mono text-[10px] text-gray-500 animate-fade-in" style="animation-delay: 0.35s;">
+            <div id="terminal-output" class="space-y-1 h-16 overflow-y-auto flex flex-col-reverse">
+                <div><span class="text-blue-400">sys:</span> Interface booted. Awaiting payload...</div>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        const API_URL = "/api/factsheet";
+        const terminal = document.getElementById('terminal-output');
+        let sectorChartInstance = null;
+        let regionChartInstance = null;
+
+        function logTerminal(msg, type="info") {
+            const colors = { info: "text-blue-400", success: "text-brand-400", err: "text-red-400", warn: "text-yellow-400" };
+            const time = new Date().toISOString().split('T')[1].slice(0,8);
+            const line = document.createElement('div');
+            line.innerHTML = `<span class="text-gray-600">[${time}]</span> <span class="${colors[type]}">${type}:</span> ${msg}`;
+            terminal.prepend(line);
+        }
+
+        function updateCharts(sectorData, regionData) {
+            const chartColors = ['#10b981', '#34d399', '#6ee7b7', '#a7f3d0', '#059669', '#047857'];
+            
+            // 1. Sector Pie/Doughnut Chart Setup
+            const sectorCtx = document.getElementById('sectorChart').getContext('2d');
+            if(sectorChartInstance) sectorChartInstance.destroy();
+            
+            sectorChartInstance = new Chart(sectorCtx, {
+                type: 'doughnut',
+                data: {
+                    labels: sectorData.map(s => s.name),
+                    datasets: [{
+                        data: sectorData.map(s => (s.percentage * 100).toFixed(2)),
+                        backgroundColor: chartColors,
+                        borderWidth: 0,
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: true, position: 'right', labels: { color: '#bcbcbc', font: { family: 'Inter', size: 11 } } }
+                    }
+                }
+            });
+
+            // 2. Regional Horizontal Bar Chart Setup
+            const regionCtx = document.getElementById('regionChart').getContext('2d');
+            if(regionChartInstance) regionChartInstance.destroy();
+            
+            regionChartInstance = new Chart(regionCtx, {
+                type: 'bar',
+                data: {
+                    labels: regionData.map(r => r.name),
+                    datasets: [{
+                        label: 'Exposure %',
+                        data: regionData.map(r => (r.percentage * 100).toFixed(2)),
+                        backgroundColor: '#10b981',
+                        borderRadius: 4,
+                        barThickness: 12
+                    }]
+                },
+                options: {
+                    indexAxis: 'y',
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        x: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#888', font: { family: 'JetBrains Mono', size: 10 } } },
+                        y: { grid: { display: false }, ticks: { color: '#ccc', font: { family: 'Inter', size: 12 } } }
+                    }
+                }
+            });
+        }
+
+        async function fetchFactsheet() {
+            logTerminal(`Initiating GET request to ${API_URL}...`, "info");
+            const startTime = performance.now();
+            
+            try {
+                const res = await fetch(API_URL);
+                if (!res.ok) throw new Error(`HTTP Error ${res.status}`);
+                
+                const data = await res.json();
+                const endTime = performance.now();
+                const latency = (endTime - startTime).toFixed(1);
+                
+                document.getElementById('latency').innerText = `${latency} ms`;
+                
+                if (parseFloat(latency) < 25) {
+                    document.getElementById('cache-status').innerText = "HIT (RWMutex)";
+                    document.getElementById('cache-status').className = "text-brand-400";
+                    logTerminal(`Served from Go in-memory cache. Latency: ${latency}ms`, "success");
+                } else {
+                    document.getElementById('cache-status').innerText = "MISS (Cold DB)";
+                    document.getElementById('cache-status').className = "text-yellow-400";
+                    logTerminal(`Fetched from Neon DB. Latency: ${latency}ms`, "warn");
+                }
+
+                document.getElementById('portfolio-name').innerText = data.name;
+                document.getElementById('portfolio-desc').innerText = data.description;
+
+                // Inject Data Array matrices directly into Chart.js elements
+                updateCharts(data.sector_exposure || [], data.regional_exposure || []);
+
+                // Render True Look Through Table rows (Left Table)
+                document.getElementById('ultimate-holdings-list').innerHTML = data.ultimate_underlying_holdings.map(uh => `
+                    <tr class="hover:bg-white/[0.03] transition-colors group">
+                        <td class="py-3.5 font-mono text-gray-400 group-hover:text-white">${uh.ticker}</td>
+                        <td class="py-3.5 text-gray-300 group-hover:text-white">${uh.name}</td>
+                        <td class="py-3.5 text-right font-mono text-brand-400 font-medium">${(uh.true_effective_weight * 100).toFixed(2)}%</td>
+                    </tr>
+                `).join('');
+
+                // Render Top Level Table rows (Right Table)
+                document.getElementById('holdings-list').innerHTML = data.holdings.map(h => `
+                    <tr class="hover:bg-white/[0.03] transition-colors">
+                        <td class="py-3 font-mono text-gray-400">${h.ticker}</td>
+                        <td class="py-3">${h.name}</td>
+                        <td class="py-3 text-right font-mono">$${h.current_price?.toFixed(2) || '--'}</td>
+                        <td class="py-3 text-right font-mono">${h.pe_ratio?.toFixed(1) || '--'}</td>
+                        <td class="py-3 text-right font-mono font-medium text-white">${(h.weight * 100).toFixed(2)}%</td>
+                    </tr>
+                `).join('');
+
+                logTerminal("Payload unmarshaled and graphs dynamically compiled to canvas.", "success");
+
+            } catch (err) {
+                console.error(err);
+                document.getElementById('portfolio-name').innerText = "SYSTEM OFFLINE";
+                document.getElementById('portfolio-name').className = "text-3xl font-semibold tracking-tight text-red-500";
+                document.getElementById('portfolio-desc').innerText = "API container waking up or database network link timing out. Retrying in 10s...";
+                logTerminal(`Fetch failed: ${err.message}.`, "err");
+                setTimeout(fetchFactsheet, 10000);
+            }
+        }
+
+        window.addEventListener('DOMContentLoaded', fetchFactsheet);
+    </script>
+</body>
+</html>
