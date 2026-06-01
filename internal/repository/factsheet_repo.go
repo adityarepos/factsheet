@@ -4,24 +4,57 @@ import (
 	"context"
 	"database/sql"
 	"factsheet/internal/models"
+	"sync"
+	"time"
 )
 
 type FactsheetRepo struct {
 	DB *sql.DB
+
+	// Thread-safe In-Memory Cache variables
+	mu         sync.RWMutex
+	cache      *models.Factsheet
+	cacheTime  time.Time
+	cacheTTL   time.Duration // Time-To-Live (How long to trust the cache)
 }
 
-// GetFactsheet aggregates portfolio data, high-level holdings, true underlying holdings, and exposures in real-time
+// NewFactsheetRepo initializes the repository with a 12-hour cache lifespan
+func NewFactsheetRepo(db *sql.DB) *FactsheetRepo {
+	return &FactsheetRepo{
+		DB:       db,
+		cacheTTL: 12 * time.Hour, // Adjust based on freshness needs
+	}
+}
+
+// GetFactsheet aggregates portfolio data, handling high-speed in-memory cache retrieval
 func (r *FactsheetRepo) GetFactsheet(ctx context.Context, portfolioID int) (*models.Factsheet, error) {
+	// 1. ACQUIRE READ LOCK: Check if a valid cache exists in memory
+	r.mu.RLock()
+	if r.cache != nil && time.Since(r.cacheTime) < r.cacheTTL {
+		defer r.mu.RUnlock()
+		return r.cache, nil // Instant cache hit (< 1ms)! Bypasses database entirely
+	}
+	r.mu.RUnlock()
+
+	// 2. ACQUIRE WRITE LOCK: Cache missed or expired. Fetch fresh data from DB
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	// Double-check condition in case another concurrent request filled it while we waited for the lock
+	if r.cache != nil && time.Since(r.cacheTime) < r.cacheTTL {
+		return r.cache, nil
+	}
+
 	factsheet := &models.Factsheet{PortfolioID: portfolioID}
 
-	// 1. Get Portfolio Metadata
+	// [DB Operation 1] Get Portfolio Metadata
 	err := r.DB.QueryRowContext(ctx, "SELECT name, description FROM portfolios WHERE id = $1", portfolioID).
 		Scan(&factsheet.Name, &factsheet.Description)
 	if err != nil {
 		return nil, err
 	}
 
-	// 2. Get Top-Level Holdings Data
+	// [DB Operation 2] Get Top-Level Holdings Data
 	holdingsQuery := `
 		SELECT a.ticker, a.name, ph.weight, a.current_price, 
 		       a.pe_ratio, a.beta, a.dividend_yield, a.fifty_two_week_high
@@ -47,7 +80,7 @@ func (r *FactsheetRepo) GetFactsheet(ctx context.Context, portfolioID int) (*mod
 		factsheet.Holdings = append(factsheet.Holdings, h)
 	}
 
-	// 3. ADVANCED LOOK-THROUGH: Calculate Ultimate Proportional Underlying Holdings
+	// [DB Operation 3] Look-Through Proportional Underlying Holdings
 	ultimateQuery := `
 		SELECT 
 			COALESCE(euh.holding_ticker, ph.asset_ticker) as ultimate_ticker,
@@ -74,7 +107,7 @@ func (r *FactsheetRepo) GetFactsheet(ctx context.Context, portfolioID int) (*mod
 		factsheet.UltimateUnderlyingHoldings = append(factsheet.UltimateUnderlyingHoldings, uh)
 	}
 
-	// 4. Calculate Aggregated Exposures
+	// [DB Operation 4] Calculate Blended Exposures
 	factsheet.SectorExposure, err = r.getExposure(ctx, portfolioID, "sector")
 	if err != nil {
 		return nil, err
@@ -85,10 +118,14 @@ func (r *FactsheetRepo) GetFactsheet(ctx context.Context, portfolioID int) (*mod
 		return nil, err
 	}
 
+	// 3. UPDATE CACHE: Save the fresh data structure to memory before returning
+	r.cache = factsheet
+	r.cacheTime = time.Now()
+
 	return factsheet, nil
 }
 
-// getExposure calculates the blended portfolio weight for a given exposure type (sector or region)
+// getExposure remains unchanged
 func (r *FactsheetRepo) getExposure(ctx context.Context, portfolioID int, exposureType string) ([]models.Exposure, error) {
 	query := `
 		SELECT ae.exposure_name, SUM(ph.weight * ae.weight_percentage) as blended_weight

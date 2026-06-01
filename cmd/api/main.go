@@ -33,7 +33,7 @@ func main() {
 	log.Println("Successfully connected to Neon PostgreSQL!")
 
 	// 2. Initialize Repository
-	repo := &repository.FactsheetRepo{DB: db}
+	repo := repository.NewFactsheetRepo(db)
 
 	// 3. Set up Router
 	r := chi.NewRouter()
