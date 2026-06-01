@@ -41,7 +41,7 @@ Create a free PostgreSQL database on Neon.tech or any server or locally and exec
 Populate the database with live market data:
 
 ```bash
-export DATABASE_URL="your_neon_postgres_string"
+export DATABASE_URL="your_postgres_connection_string"
 pip install -r scripts/requirements.txt
 python scripts/fetch_data.py
 ```
@@ -50,7 +50,7 @@ python scripts/fetch_data.py
 Launch the Go server to serve the factsheet data:
 
 ```bash
-export DATABASE_URL="your_neon_postgres_string"
+export DATABASE_URL="your_postgres_connection_string"
 export PORT="8080"
 go build -o factsheet cmd/api/main.go
 ./factsheet
