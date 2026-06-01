@@ -32,14 +32,9 @@
     
     <style>
         body { background-color: #09090b; color: #ededed; }
-        .glass-panel {
-            background: rgba(255, 255, 255, 0.02);
-            border: 1px solid rgba(255, 255, 255, 0.05);
-            backdrop-filter: blur(10px);
-        }
+        .glass-panel { background: rgba(255, 255, 255, 0.02); border: 1px solid rgba(255, 255, 255, 0.05); backdrop-filter: blur(10px); }
         .animate-fade-in { animation: fadeIn 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards; opacity: 0; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-        
         ::-webkit-scrollbar { width: 4px; height: 4px; }
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
@@ -67,7 +62,7 @@
                     </svg>
                 </a>
                 <div>
-                    <div class="uppercase tracking-wider text-gray-600 mb-1">Latency</div>
+                    <div class="uppercase tracking-wider text-gray-600 mb-1">Network RTT</div>
                     <div id="latency" class="text-white">-- ms</div>
                 </div>
                 <div>
@@ -93,7 +88,6 @@
         </div>
 
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start animate-fade-in" style="animation-delay: 0.25s;">
-            
             <div class="glass-panel rounded-xl overflow-hidden relative">
                 <div class="absolute top-0 left-0 w-full h-px bg-gradient-to-r from-transparent via-brand-500/50 to-transparent"></div>
                 <div class="p-6">
@@ -110,8 +104,7 @@
                                     <th class="pb-3 font-normal text-right">NET WEIGHT</th>
                                 </tr>
                             </thead>
-                            <tbody id="ultimate-holdings-list" class="divide-y divide-white/5 text-sm">
-                                </tbody>
+                            <tbody id="ultimate-holdings-list" class="divide-y divide-white/5 text-sm"></tbody>
                         </table>
                     </div>
                 </div>
@@ -130,12 +123,10 @@
                                 <th class="pb-3 font-normal text-right">ALLOCATION</th>
                             </tr>
                         </thead>
-                        <tbody id="holdings-list" class="divide-y divide-white/5 text-sm text-gray-300">
-                            </tbody>
+                        <tbody id="holdings-list" class="divide-y divide-white/5 text-sm text-gray-300"></tbody>
                     </table>
                 </div>
             </div>
-
         </div>
         
         <div class="glass-panel rounded-lg p-4 font-mono text-[10px] text-gray-500 animate-fade-in" style="animation-delay: 0.35s;">
@@ -163,54 +154,28 @@
         function updateCharts(sectorData, regionData) {
             const chartColors = ['#10b981', '#34d399', '#6ee7b7', '#a7f3d0', '#059669', '#047857'];
             
-            // 1. Sector Pie/Doughnut Chart Setup
             const sectorCtx = document.getElementById('sectorChart').getContext('2d');
             if(sectorChartInstance) sectorChartInstance.destroy();
-            
             sectorChartInstance = new Chart(sectorCtx, {
                 type: 'doughnut',
                 data: {
                     labels: sectorData.map(s => s.name),
-                    datasets: [{
-                        data: sectorData.map(s => (s.percentage * 100).toFixed(2)),
-                        backgroundColor: chartColors,
-                        borderWidth: 0,
-                    }]
+                    datasets: [{ data: sectorData.map(s => (s.percentage * 100).toFixed(2)), backgroundColor: chartColors, borderWidth: 0 }]
                 },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: {
-                        legend: { display: true, position: 'right', labels: { color: '#bcbcbc', font: { family: 'Inter', size: 11 } } }
-                    }
-                }
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: true, position: 'right', labels: { color: '#bcbcbc', font: { family: 'Inter', size: 11 } } } } }
             });
 
-            // 2. Regional Horizontal Bar Chart Setup
             const regionCtx = document.getElementById('regionChart').getContext('2d');
             if(regionChartInstance) regionChartInstance.destroy();
-            
             regionChartInstance = new Chart(regionCtx, {
                 type: 'bar',
                 data: {
                     labels: regionData.map(r => r.name),
-                    datasets: [{
-                        label: 'Exposure %',
-                        data: regionData.map(r => (r.percentage * 100).toFixed(2)),
-                        backgroundColor: '#10b981',
-                        borderRadius: 4,
-                        barThickness: 12
-                    }]
+                    datasets: [{ label: 'Exposure %', data: regionData.map(r => (r.percentage * 100).toFixed(2)), backgroundColor: '#10b981', borderRadius: 4, barThickness: 12 }]
                 },
                 options: {
-                    indexAxis: 'y',
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: { legend: { display: false } },
-                    scales: {
-                        x: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#888', font: { family: 'JetBrains Mono', size: 10 } } },
-                        y: { grid: { display: false }, ticks: { color: '#ccc', font: { family: 'Inter', size: 12 } } }
-                    }
+                    indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } },
+                    scales: { x: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#888', font: { family: 'JetBrains Mono', size: 10 } } }, y: { grid: { display: false }, ticks: { color: '#ccc', font: { family: 'Inter', size: 12 } } } }
                 }
             });
         }
@@ -223,29 +188,31 @@
                 const res = await fetch(API_URL);
                 if (!res.ok) throw new Error(`HTTP Error ${res.status}`);
                 
+                // Read the actual Backend Truth Header
+                const cacheStatus = res.headers.get("X-Cache");
                 const data = await res.json();
+                
                 const endTime = performance.now();
                 const latency = (endTime - startTime).toFixed(1);
                 
                 document.getElementById('latency').innerText = `${latency} ms`;
                 
-                if (parseFloat(latency) < 25) {
+                // Determine UI text strictly by Go Backend Header, ignoring global latency
+                if (cacheStatus === "HIT") {
                     document.getElementById('cache-status').innerText = "HIT (RWMutex)";
                     document.getElementById('cache-status').className = "text-brand-400";
-                    logTerminal(`Served from Go in-memory cache. Latency: ${latency}ms`, "success");
+                    logTerminal(`Served from Go RAM. Global RTT latency: ${latency}ms`, "success");
                 } else {
                     document.getElementById('cache-status').innerText = "MISS (Cold DB)";
                     document.getElementById('cache-status').className = "text-yellow-400";
-                    logTerminal(`Fetched from Neon DB. Latency: ${latency}ms`, "warn");
+                    logTerminal(`Fetched from Neon DB. Global RTT latency: ${latency}ms`, "warn");
                 }
 
                 document.getElementById('portfolio-name').innerText = data.name;
                 document.getElementById('portfolio-desc').innerText = data.description;
 
-                // Inject Data Array matrices directly into Chart.js elements
                 updateCharts(data.sector_exposure || [], data.regional_exposure || []);
 
-                // Render True Look Through Table rows (Left Table)
                 document.getElementById('ultimate-holdings-list').innerHTML = data.ultimate_underlying_holdings.map(uh => `
                     <tr class="hover:bg-white/[0.03] transition-colors group">
                         <td class="py-3.5 font-mono text-gray-400 group-hover:text-white">${uh.ticker}</td>
@@ -254,7 +221,6 @@
                     </tr>
                 `).join('');
 
-                // Render Top Level Table rows (Right Table)
                 document.getElementById('holdings-list').innerHTML = data.holdings.map(h => `
                     <tr class="hover:bg-white/[0.03] transition-colors">
                         <td class="py-3 font-mono text-gray-400">${h.ticker}</td>

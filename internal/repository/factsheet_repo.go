@@ -8,7 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	// TODO: Replace "factsheet" with the exact module name defined in your go.mod file
+	// TODO: Ensure this matches your go.mod module name
 	"factsheet/internal/models"
 )
 
@@ -29,49 +29,49 @@ func NewFactsheetRepository(db *pgxpool.Pool) *FactsheetRepository {
 	}
 }
 
-func (repo *FactsheetRepository) GetFactsheet(ctx context.Context, portfolioID int) (*models.Factsheet, error) {
-	// 1. Evaluate Current Memory Blocks using a Concurrent Read-Lock
+// Returns the Factsheet, a Boolean indicating if it was a Cache HIT (true), and an Error
+func (repo *FactsheetRepository) GetFactsheet(ctx context.Context, portfolioID int) (*models.Factsheet, bool, error) {
 	repo.mu.RLock()
 	cachedData, exists := repo.cache[portfolioID]
 	expTime, hasExp := repo.expiration[portfolioID]
 	repo.mu.RUnlock()
 
-	// TTL Condition Check: If cache exists and has not expired yet, serve instantly from RAM
+	// CACHE HIT: Valid in memory, served instantly
 	if exists && hasExp && time.Now().Before(expTime) {
-		return cachedData, nil
+		return cachedData, true, nil
 	}
 
-	// 2. CACHE MISS: Secure Full Write Lock to prevent thread race collisions during DB queries
+	// CACHE MISS: Write Lock required
 	repo.mu.Lock()
 	defer repo.mu.Unlock()
 
-	// Double-Check pattern: Did another concurrent thread populate the cache while we were waiting for the lock?
+	// Double-Check pattern
 	if cachedData, exists = repo.cache[portfolioID]; exists && time.Now().Before(repo.expiration[portfolioID]) {
-		return cachedData, nil
+		return cachedData, true, nil
 	}
 
-	// 3. DATABASE CALL: Rebuild metrics using optimal relational aggregations
 	factsheet, err := repo.fetchFromDatabase(ctx, portfolioID)
 	if err != nil {
-		return nil, fmt.Errorf("database query failure: %w", err)
+		return nil, false, fmt.Errorf("database query failure: %w", err)
 	}
 
-	// 4. PRIMING STEP: Save to state memory and assign clean 12-hour expiration window
+	// Save to state memory
 	repo.cache[portfolioID] = factsheet
 	repo.expiration[portfolioID] = time.Now().Add(repo.cacheTTL)
 
-	return factsheet, nil
+	// Return FALSE because we hit the Cold Database
+	return factsheet, false, nil
 }
 
 func (repo *FactsheetRepository) fetchFromDatabase(ctx context.Context, portfolioID int) (*models.Factsheet, error) {
+	// Initialize explicitly to prevent 'null' arrays in JSON output
 	factsheet := &models.Factsheet{
-		Holdings:                  []models.Holding{},
-		UltimateUnderlyingHoldings: []models.UltimateHolding{},
-		SectorExposure:            []models.Exposure{},
-		RegionalExposure:          []models.Exposure{},
+		Holdings:                   make([]models.Holding, 0),
+		UltimateUnderlyingHoldings: make([]models.UltimateHolding, 0),
+		SectorExposure:             make([]models.Exposure, 0),
+		RegionalExposure:           make([]models.Exposure, 0),
 	}
 
-	// Query A: Fetch Base Portfolio Metadata Info
 	err := repo.db.QueryRow(ctx, 
 		"SELECT id, name, description FROM portfolios WHERE id = $1", portfolioID,
 	).Scan(&factsheet.PortfolioID, &factsheet.Name, &factsheet.Description)
@@ -79,7 +79,6 @@ func (repo *FactsheetRepository) fetchFromDatabase(ctx context.Context, portfoli
 		return nil, err
 	}
 
-	// Query B: Fetch Top-Level Seeded Portfolio Allocations 
 	holdingsQuery := `
 		SELECT a.ticker, a.name, a.current_price, a.pe_ratio, ph.weight 
 		FROM portfolio_holdings ph
@@ -102,7 +101,6 @@ func (repo *FactsheetRepository) fetchFromDatabase(ctx context.Context, portfoli
 		factsheet.Holdings = append(factsheet.Holdings, h)
 	}
 
-	// Query C: The Ultimate Look-Through Exposure Aggregator (SQL LEFT JOIN + COALESCE)
 	lookThroughQuery := `
 		SELECT 
 			COALESCE(euh.holding_ticker, ph.asset_ticker) as true_ticker,
@@ -130,7 +128,6 @@ func (repo *FactsheetRepository) fetchFromDatabase(ctx context.Context, portfoli
 		factsheet.UltimateUnderlyingHoldings = append(factsheet.UltimateUnderlyingHoldings, lt)
 	}
 
-	// Query D: Extract Macro Factor Exposure Blocks (Sectors)
 	sectorQuery := `
 		SELECT ae.exposure_name, SUM(ph.weight * ae.weight_percentage) as blended_weight
 		FROM portfolio_holdings ph
@@ -154,7 +151,6 @@ func (repo *FactsheetRepository) fetchFromDatabase(ctx context.Context, portfoli
 		factsheet.SectorExposure = append(factsheet.SectorExposure, s)
 	}
 
-	// Query E: Extract Macro Factor Exposure Blocks (Regions)
 	regionQuery := `
 		SELECT ae.exposure_name, SUM(ph.weight * ae.weight_percentage) as blended_weight
 		FROM portfolio_holdings ph
