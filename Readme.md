@@ -35,7 +35,7 @@ graph TD
 ## 🚦 Local Setup Instructions
 
 ### 1. Database Setup
-Create a free PostgreSQL database on Neon.tech and execute the schema found in `internal/database/init.sql`.
+Create a free PostgreSQL database on Neon.tech or any server or locally and execute the schema found in `internal/database/init.sql`.
 
 ### 2. Run the ETL Pipeline (Python)
 Populate the database with live market data:
