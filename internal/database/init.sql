@@ -39,6 +39,14 @@ CREATE TABLE asset_exposures (
     CONSTRAINT unique_asset_exposure UNIQUE (asset_ticker, exposure_type, exposure_name)
 );
 
+CREATE TABLE etf_underlying_holdings (
+    etf_ticker VARCHAR(50) REFERENCES assets(ticker) ON DELETE CASCADE,
+    holding_ticker VARCHAR(50),
+    holding_name VARCHAR(255),
+    holding_weight NUMERIC(5,4),
+    PRIMARY KEY (etf_ticker, holding_ticker)
+);
+
 -- 5. Seed the Prisma Global Growth Portfolio
 INSERT INTO portfolios (id, name, description) 
 VALUES (1, 'Global Growth Prisma', 'End-to-end global investing diversified portfolio for resident Indians.');

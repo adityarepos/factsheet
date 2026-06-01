@@ -10,7 +10,7 @@ type FactsheetRepo struct {
 	DB *sql.DB
 }
 
-// GetFactsheet aggregates portfolio data, holdings, and exposures in real-time
+// GetFactsheet aggregates portfolio data, high-level holdings, true underlying holdings, and exposures in real-time
 func (r *FactsheetRepo) GetFactsheet(ctx context.Context, portfolioID int) (*models.Factsheet, error) {
 	factsheet := &models.Factsheet{PortfolioID: portfolioID}
 
@@ -21,7 +21,7 @@ func (r *FactsheetRepo) GetFactsheet(ctx context.Context, portfolioID int) (*mod
 		return nil, err
 	}
 
-	// 2. Get Holdings Data
+	// 2. Get Top-Level Holdings Data
 	holdingsQuery := `
 		SELECT a.ticker, a.name, ph.weight, a.current_price, 
 		       a.pe_ratio, a.beta, a.dividend_yield, a.fifty_two_week_high
@@ -38,7 +38,6 @@ func (r *FactsheetRepo) GetFactsheet(ctx context.Context, portfolioID int) (*mod
 
 	for rows.Next() {
 		var h models.Holding
-		// Make sure the order matches your SELECT statement exactly!
 		if err := rows.Scan(
 			&h.Ticker, &h.Name, &h.Weight, &h.CurrentPrice, 
 			&h.PERatio, &h.Beta, &h.DividendYield, &h.FiftyTwoWeekHigh,
@@ -48,7 +47,34 @@ func (r *FactsheetRepo) GetFactsheet(ctx context.Context, portfolioID int) (*mod
 		factsheet.Holdings = append(factsheet.Holdings, h)
 	}
 
-	// 3. Calculate Aggregated Exposures (Helper Function below)
+	// 3. ADVANCED LOOK-THROUGH: Calculate Ultimate Proportional Underlying Holdings
+	ultimateQuery := `
+		SELECT 
+			COALESCE(euh.holding_ticker, ph.asset_ticker) as ultimate_ticker,
+			COALESCE(euh.holding_name, a.name) as ultimate_name,
+			SUM(ph.weight * COALESCE(euh.holding_weight, 1.0)) as true_effective_weight
+		FROM portfolio_holdings ph
+		JOIN assets a ON ph.asset_ticker = a.ticker
+		LEFT JOIN etf_underlying_holdings euh ON ph.asset_ticker = euh.etf_ticker
+		WHERE ph.portfolio_id = $1
+		GROUP BY ultimate_ticker, ultimate_name
+		ORDER BY true_effective_weight DESC;`
+
+	ultRows, err := r.DB.QueryContext(ctx, ultimateQuery, portfolioID)
+	if err != nil {
+		return nil, err
+	}
+	defer ultRows.Close()
+
+	for ultRows.Next() {
+		var uh models.UltimateHolding
+		if err := ultRows.Scan(&uh.Ticker, &uh.Name, &uh.TrueEffectiveWeight); err != nil {
+			return nil, err
+		}
+		factsheet.UltimateUnderlyingHoldings = append(factsheet.UltimateUnderlyingHoldings, uh)
+	}
+
+	// 4. Calculate Aggregated Exposures
 	factsheet.SectorExposure, err = r.getExposure(ctx, portfolioID, "sector")
 	if err != nil {
 		return nil, err

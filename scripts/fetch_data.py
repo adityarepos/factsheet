@@ -22,22 +22,29 @@ def update_asset_data(conn, ticker):
     name = info.get('longName', info.get('shortName', ticker))
     price = info.get('currentPrice') or info.get('navPrice') or info.get('previousClose')
     
-    # 2. Extract NEW deeper financial metrics (Use .get to safely return None if missing)
+    # 2. Extract deeper financial metrics (Use .get to safely return None if missing)
     pe_ratio = info.get('trailingPE')
     beta = info.get('beta')
     div_yield = info.get('dividendYield')
     high_52 = info.get('fiftyTwoWeekHigh')
 
-    mcap = info.get('marketCap', 0)
-    if mcap > 10_000_000_000:
-        mcap_cat = 'Large Cap'
-    elif mcap > 2_000_000_000:
-        mcap_cat = 'Mid Cap'
+    # Detect if it's an ETF or determine by Market Cap
+    quote_type = info.get('quoteType', '').upper()
+    is_etf = quote_type == 'ETF' or ticker in ['VOO', 'IEFA', 'VWO']
+
+    if is_etf:
+        mcap_cat = 'ETF'
     else:
-        mcap_cat = 'Small Cap'
+        mcap = info.get('marketCap', 0)
+        if mcap > 10_000_000_000:
+            mcap_cat = 'Large Cap'
+        elif mcap > 2_000_000_000:
+            mcap_cat = 'Mid Cap'
+        else:
+            mcap_cat = 'Small Cap'
 
     with conn.cursor() as cur:
-        # Upsert into main asset table with new metrics
+        # Upsert into main asset table with metrics
         cur.execute("""
             INSERT INTO assets (ticker, name, current_price, pe_ratio, beta, dividend_yield, fifty_two_week_high, market_cap_category, last_updated)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
@@ -52,7 +59,7 @@ def update_asset_data(conn, ticker):
                 last_updated = CURRENT_TIMESTAMP;
         """, (ticker, name, price, pe_ratio, beta, div_yield, high_52, mcap_cat))
         
-        # Extract Sector & Regional Exposures (unchanged)
+        # Extract Sector & Regional Exposures
         exposures = []
         if 'sector' in info:
             exposures.append((ticker, 'sector', info['sector'], 1.0))
@@ -60,13 +67,44 @@ def update_asset_data(conn, ticker):
             exposures.append((ticker, 'region', info['country'], 1.0))
 
         if exposures:
-            from psycopg2.extras import execute_values
             execute_values(cur, """
                 INSERT INTO asset_exposures (asset_ticker, exposure_type, exposure_name, weight_percentage)
                 VALUES %s
                 ON CONFLICT (asset_ticker, exposure_type, exposure_name)
                 DO UPDATE SET weight_percentage = EXCLUDED.weight_percentage;
             """, exposures)
+
+        # 3. ADVANCED: Look-Through Dataset Extraction for ETFs/Funds
+        if is_etf:
+            try:
+                # yfinance returns top holdings as a pandas DataFrame via .funds_data.top_holdings
+                funds = asset.funds_data
+                if funds is not None and hasattr(funds, 'top_holdings') and funds.top_holdings is not None:
+                    df_holdings = funds.top_holdings
+                    
+                    underlying_records = []
+                    for _, row in df_holdings.iterrows():
+                        h_ticker = row.get('Symbol')
+                        h_name = row.get('Name')
+                        h_weight = row.get('Holding Percent')
+                        
+                        if h_ticker and h_weight is not None:
+                            # Safely convert percentage format (e.g. 0.065 or 6.5) to decimal fraction
+                            if h_weight > 1.0:
+                                h_weight = h_weight / 100.0
+                                
+                            underlying_records.append((ticker, h_ticker, h_name, h_weight))
+                    
+                    if underlying_records:
+                        execute_values(cur, """
+                            INSERT INTO etf_underlying_holdings (etf_ticker, holding_ticker, holding_name, holding_weight)
+                            VALUES %s
+                            ON CONFLICT (etf_ticker, holding_ticker)
+                            DO UPDATE SET holding_weight = EXCLUDED.holding_weight;
+                        """, underlying_records)
+                        print(f" -> Extracted {len(underlying_records)} look-through components inside {ticker}.")
+            except Exception as etf_err:
+                print(f" -> Skip underlying check for {ticker}: {etf_err}")
 
 def main():
     print("Connecting to database...")
