@@ -1,0 +1,28 @@
+name: Daily Data Sync
+
+on:
+  schedule:
+    # This instructs GitHub to run your script automatically every single day at 00:00 UTC (5:30 AM IST)
+    - cron: '0 0 * * *'
+  workflow_dispatch:   # This adds a manual "Play" button in the GitHub UI so you can test it instantly!
+
+jobs:
+  run-etl:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout Code Repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python Environment
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install Ingestion Libraries
+      run: pip install -r scripts/requirements.txt
+
+    - name: Execute Script Securely
+      env:
+        # This securely grabs your Neon DB string from your GitHub Repository Secrets
+        DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      run: python scripts/fetch_data.py
