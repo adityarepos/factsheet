@@ -4,6 +4,8 @@ An end-to-end financial data pipeline and high-performance REST API designed to 
 
 This system features a decoupled architecture, separating heavy data ingestion from client-facing data delivery, ensuring high availability, automated data freshness, sub-millisecond API response times, and an interactive analytics interface.
 
+🔗 **Live Production Deployment URL:** [https://prisma-factsheet-api.onrender.com/](https://prisma-factsheet-api.onrender.com/)
+
 ## 🏗 System Architecture
 
 ```mermaid
