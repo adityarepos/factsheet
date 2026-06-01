@@ -2,152 +2,181 @@ package repository
 
 import (
 	"context"
-	"database/sql"
-	"factsheet/internal/models"
+	"fmt"
 	"sync"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	// TODO: Replace "factsheet" with the exact module name defined in your go.mod file
+	"factsheet/internal/models"
 )
 
-type FactsheetRepo struct {
-	DB *sql.DB
-
-	// Thread-safe In-Memory Cache variables
+type FactsheetRepository struct {
+	db         *pgxpool.Pool
 	mu         sync.RWMutex
-	cache      *models.Factsheet
-	cacheTime  time.Time
-	cacheTTL   time.Duration // Time-To-Live (How long to trust the cache)
+	cache      map[int]*models.Factsheet
+	cacheTTL   time.Duration
+	expiration map[int]time.Time
 }
 
-// NewFactsheetRepo initializes the repository with a 12-hour cache lifespan
-func NewFactsheetRepo(db *sql.DB) *FactsheetRepo {
-	return &FactsheetRepo{
-		DB:       db,
-		cacheTTL: 12 * time.Hour, // Adjust based on freshness needs
+func NewFactsheetRepository(db *pgxpool.Pool) *FactsheetRepository {
+	return &FactsheetRepository{
+		db:         db,
+		cache:      make(map[int]*models.Factsheet),
+		cacheTTL:   12 * time.Hour,
+		expiration: make(map[int]time.Time),
 	}
 }
 
-// GetFactsheet aggregates portfolio data, handling high-speed in-memory cache retrieval
-func (r *FactsheetRepo) GetFactsheet(ctx context.Context, portfolioID int) (*models.Factsheet, error) {
-	// 1. ACQUIRE READ LOCK: Check if a valid cache exists in memory
-	r.mu.RLock()
-	if r.cache != nil && time.Since(r.cacheTime) < r.cacheTTL {
-		defer r.mu.RUnlock()
-		return r.cache, nil // Instant cache hit (< 1ms)! Bypasses database entirely
-	}
-	r.mu.RUnlock()
+func (repo *FactsheetRepository) GetFactsheet(ctx context.Context, portfolioID int) (*models.Factsheet, error) {
+	// 1. Evaluate Current Memory Blocks using a Concurrent Read-Lock
+	repo.mu.RLock()
+	cachedData, exists := repo.cache[portfolioID]
+	expTime, hasExp := repo.expiration[portfolioID]
+	repo.mu.RUnlock()
 
-	// 2. ACQUIRE WRITE LOCK: Cache missed or expired. Fetch fresh data from DB
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	// Double-check condition in case another concurrent request filled it while we waited for the lock
-	if r.cache != nil && time.Since(r.cacheTime) < r.cacheTTL {
-		return r.cache, nil
+	// TTL Condition Check: If cache exists and has not expired yet, serve instantly from RAM
+	if exists && hasExp && time.Now().Before(expTime) {
+		return cachedData, nil
 	}
 
-	factsheet := &models.Factsheet{PortfolioID: portfolioID}
+	// 2. CACHE MISS: Secure Full Write Lock to prevent thread race collisions during DB queries
+	repo.mu.Lock()
+	defer repo.mu.Unlock()
 
-	// [DB Operation 1] Get Portfolio Metadata
-	err := r.DB.QueryRowContext(ctx, "SELECT name, description FROM portfolios WHERE id = $1", portfolioID).
-		Scan(&factsheet.Name, &factsheet.Description)
+	// Double-Check pattern: Did another concurrent thread populate the cache while we were waiting for the lock?
+	if cachedData, exists = repo.cache[portfolioID]; exists && time.Now().Before(repo.expiration[portfolioID]) {
+		return cachedData, nil
+	}
+
+	// 3. DATABASE CALL: Rebuild metrics using optimal relational aggregations
+	factsheet, err := repo.fetchFromDatabase(ctx, portfolioID)
+	if err != nil {
+		return nil, fmt.Errorf("database query failure: %w", err)
+	}
+
+	// 4. PRIMING STEP: Save to state memory and assign clean 12-hour expiration window
+	repo.cache[portfolioID] = factsheet
+	repo.expiration[portfolioID] = time.Now().Add(repo.cacheTTL)
+
+	return factsheet, nil
+}
+
+func (repo *FactsheetRepository) fetchFromDatabase(ctx context.Context, portfolioID int) (*models.Factsheet, error) {
+	factsheet := &models.Factsheet{
+		Holdings:                  []models.Holding{},
+		UltimateUnderlyingHoldings: []models.UltimateHolding{},
+		SectorExposure:            []models.Exposure{},
+		RegionalExposure:          []models.Exposure{},
+	}
+
+	// Query A: Fetch Base Portfolio Metadata Info
+	err := repo.db.QueryRow(ctx, 
+		"SELECT id, name, description FROM portfolios WHERE id = $1", portfolioID,
+	).Scan(&factsheet.PortfolioID, &factsheet.Name, &factsheet.Description)
 	if err != nil {
 		return nil, err
 	}
 
-	// [DB Operation 2] Get Top-Level Holdings Data
+	// Query B: Fetch Top-Level Seeded Portfolio Allocations 
 	holdingsQuery := `
-		SELECT a.ticker, a.name, ph.weight, a.current_price, 
-		       a.pe_ratio, a.beta, a.dividend_yield, a.fifty_two_week_high
+		SELECT a.ticker, a.name, a.current_price, a.pe_ratio, ph.weight 
 		FROM portfolio_holdings ph
 		JOIN assets a ON ph.asset_ticker = a.ticker
 		WHERE ph.portfolio_id = $1
-		ORDER BY ph.weight DESC;`
+		ORDER BY ph.weight DESC`
 	
-	rows, err := r.DB.QueryContext(ctx, holdingsQuery, portfolioID)
+	hRows, err := repo.db.Query(ctx, holdingsQuery, portfolioID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer hRows.Close()
 
-	for rows.Next() {
+	for hRows.Next() {
 		var h models.Holding
-		if err := rows.Scan(
-			&h.Ticker, &h.Name, &h.Weight, &h.CurrentPrice, 
-			&h.PERatio, &h.Beta, &h.DividendYield, &h.FiftyTwoWeekHigh,
-		); err != nil {
+		err := hRows.Scan(&h.Ticker, &h.Name, &h.CurrentPrice, &h.PERatio, &h.Weight)
+		if err != nil {
 			return nil, err
 		}
 		factsheet.Holdings = append(factsheet.Holdings, h)
 	}
 
-	// [DB Operation 3] Look-Through Proportional Underlying Holdings
-	ultimateQuery := `
+	// Query C: The Ultimate Look-Through Exposure Aggregator (SQL LEFT JOIN + COALESCE)
+	lookThroughQuery := `
 		SELECT 
-			COALESCE(euh.holding_ticker, ph.asset_ticker) as ultimate_ticker,
-			COALESCE(euh.holding_name, a.name) as ultimate_name,
-			SUM(ph.weight * COALESCE(euh.holding_weight, 1.0)) as true_effective_weight
+			COALESCE(euh.holding_ticker, ph.asset_ticker) as true_ticker,
+			COALESCE(euh.holding_name, a.name) as true_name,
+			SUM(ph.weight * COALESCE(euh.holding_weight, 1.0000)) as true_effective_weight
 		FROM portfolio_holdings ph
 		JOIN assets a ON ph.asset_ticker = a.ticker
 		LEFT JOIN etf_underlying_holdings euh ON ph.asset_ticker = euh.etf_ticker
 		WHERE ph.portfolio_id = $1
-		GROUP BY ultimate_ticker, ultimate_name
-		ORDER BY true_effective_weight DESC;`
+		GROUP BY true_ticker, true_name
+		ORDER BY true_effective_weight DESC`
 
-	ultRows, err := r.DB.QueryContext(ctx, ultimateQuery, portfolioID)
+	ltRows, err := repo.db.Query(ctx, lookThroughQuery, portfolioID)
 	if err != nil {
 		return nil, err
 	}
-	defer ultRows.Close()
+	defer ltRows.Close()
 
-	for ultRows.Next() {
-		var uh models.UltimateHolding
-		if err := ultRows.Scan(&uh.Ticker, &uh.Name, &uh.TrueEffectiveWeight); err != nil {
+	for ltRows.Next() {
+		var lt models.UltimateHolding
+		err := ltRows.Scan(&lt.Ticker, &lt.Name, &lt.TrueEffectiveWeight)
+		if err != nil {
 			return nil, err
 		}
-		factsheet.UltimateUnderlyingHoldings = append(factsheet.UltimateUnderlyingHoldings, uh)
+		factsheet.UltimateUnderlyingHoldings = append(factsheet.UltimateUnderlyingHoldings, lt)
 	}
 
-	// [DB Operation 4] Calculate Blended Exposures
-	factsheet.SectorExposure, err = r.getExposure(ctx, portfolioID, "sector")
-	if err != nil {
-		return nil, err
-	}
-
-	factsheet.RegionalExposure, err = r.getExposure(ctx, portfolioID, "region")
-	if err != nil {
-		return nil, err
-	}
-
-	// 3. UPDATE CACHE: Save the fresh data structure to memory before returning
-	r.cache = factsheet
-	r.cacheTime = time.Now()
-
-	return factsheet, nil
-}
-
-// getExposure remains unchanged
-func (r *FactsheetRepo) getExposure(ctx context.Context, portfolioID int, exposureType string) ([]models.Exposure, error) {
-	query := `
+	// Query D: Extract Macro Factor Exposure Blocks (Sectors)
+	sectorQuery := `
 		SELECT ae.exposure_name, SUM(ph.weight * ae.weight_percentage) as blended_weight
 		FROM portfolio_holdings ph
 		JOIN asset_exposures ae ON ph.asset_ticker = ae.asset_ticker
-		WHERE ph.portfolio_id = $1 AND ae.exposure_type = $2
+		WHERE ph.portfolio_id = $1 AND ae.exposure_type = 'sector'
 		GROUP BY ae.exposure_name
-		ORDER BY blended_weight DESC;`
+		ORDER BY blended_weight DESC`
 
-	rows, err := r.DB.QueryContext(ctx, query, portfolioID, exposureType)
+	sRows, err := repo.db.Query(ctx, sectorQuery, portfolioID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer sRows.Close()
 
-	var exposures []models.Exposure
-	for rows.Next() {
-		var e models.Exposure
-		if err := rows.Scan(&e.Name, &e.Percentage); err != nil {
+	for sRows.Next() {
+		var s models.Exposure
+		err := sRows.Scan(&s.Name, &s.Percentage)
+		if err != nil {
 			return nil, err
 		}
-		exposures = append(exposures, e)
+		factsheet.SectorExposure = append(factsheet.SectorExposure, s)
 	}
-	return exposures, nil
+
+	// Query E: Extract Macro Factor Exposure Blocks (Regions)
+	regionQuery := `
+		SELECT ae.exposure_name, SUM(ph.weight * ae.weight_percentage) as blended_weight
+		FROM portfolio_holdings ph
+		JOIN asset_exposures ae ON ph.asset_ticker = ae.asset_ticker
+		WHERE ph.portfolio_id = $1 AND ae.exposure_type = 'region'
+		GROUP BY ae.exposure_name
+		ORDER BY blended_weight DESC`
+
+	rRows, err := repo.db.Query(ctx, regionQuery, portfolioID)
+	if err != nil {
+		return nil, err
+	}
+	defer rRows.Close()
+
+	for rRows.Next() {
+		var r models.Exposure
+		err := rRows.Scan(&r.Name, &r.Percentage)
+		if err != nil {
+			return nil, err
+		}
+		factsheet.RegionalExposure = append(factsheet.RegionalExposure, r)
+	}
+
+	return factsheet, nil
 }
