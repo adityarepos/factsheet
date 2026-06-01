@@ -1,0 +1,13 @@
+# Local Environment Variables (Crucial: Never leak your Neon DB Password!)
+.env
+DATABASE_URL
+
+# Python Virtual Environment
+venv/
+.venv/
+__pycache__/
+*.pyc
+
+# Go Binaries (Compiled output)
+factsheet
+cmd/api/api
